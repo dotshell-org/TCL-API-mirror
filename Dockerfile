@@ -7,6 +7,8 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
+RUN npm install
+
 # Install dependencies (including dev dependencies for build)
 RUN npm ci
 
@@ -28,6 +30,8 @@ WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
+
+RUN npm install
 
 # Install only production dependencies
 RUN npm ci --omit=dev && npm cache clean --force
