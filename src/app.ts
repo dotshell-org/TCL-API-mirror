@@ -3,13 +3,23 @@
  * @module app
  */
 
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import trafficRoutes from './routes/trafficRoutes.js';
 import vehicleMonitoringRoutes from './routes/vehicleMonitoringRoutes.js';
 
 const app = express();
 
 // Middleware
+app.use((req: Request, res: Response, next: NextFunction) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') {
+        res.sendStatus(204);
+        return;
+    }
+    next();
+});
 app.use(express.json());
 
 /**
