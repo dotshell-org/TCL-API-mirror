@@ -22,6 +22,7 @@ let allSimulatedPositions: Array<{
     vehicleId?: string;
     lineId?: string;
 }> = [];
+let lastKnownPositions: Array<{latitude: number, longitude: number, timestamp: number}> = [];
 
 const startHeartbeat = (): void => {
     if (heartbeatInterval) {
@@ -122,6 +123,7 @@ export const sendEnhancedVehicleMonitoringUpdate = (
 
 /**
  * Start real-time simulation that sends positions progressively
+ * Now handles cases where real data doesn't change frequently
  */
 function startRealTimeSimulation(cachedData: CachedVehicleMonitoringData): void {
     try {
@@ -135,36 +137,49 @@ function startRealTimeSimulation(cachedData: CachedVehicleMonitoringData): void 
         // Extract real positions and generate all interpolated positions
         const realPositions = VehiclePositionInterpolator.extractVehiclePositions(cachedData.payload);
         
+        // NEW: If we don't have enough real positions, use last known positions
+        // This ensures continuous movement even when real data doesn't change
         if (realPositions.length < 2) {
-            return;
-        }
-        
-        // Generate all interpolated positions
-        allSimulatedPositions = [];
-        
-        for (let i = 0; i < realPositions.length - 1; i++) {
-            const startPos = realPositions[i];
-            const endPos = realPositions[i + 1];
+            logger.warn('⚠️  Not enough real positions, using continuous simulation with last known data');
             
-            if (!startPos || !endPos) {
-                continue;
+            // Create continuous movement pattern if no real data changes
+            if (lastKnownPositions && lastKnownPositions.length >= 2) {
+                allSimulatedPositions = generateContinuousMovement(lastKnownPositions);
+            } else {
+                // Fallback: create default movement pattern in Lyon area
+                allSimulatedPositions = generateDefaultMovementPattern();
             }
+        } else {
+            // Store these as last known positions for future use
+            lastKnownPositions = realPositions;
             
-            const interpolated = VehiclePositionInterpolator.generateInterpolatedPositions(startPos, endPos);
+            // Generate all interpolated positions from real data
+            allSimulatedPositions = [];
             
-            // Add to our simulation queue
-            interpolated.forEach(pos => {
-                allSimulatedPositions.push({
-                    position: {
-                        latitude: pos.latitude,
-                        longitude: pos.longitude
-                    },
-                    timestamp: pos.timestamp,
-                    isEstimated: pos.isEstimated,
-                    vehicleId: `vehicle_${i}`,
-                    lineId: `line_${i}`
+            for (let i = 0; i < realPositions.length - 1; i++) {
+                const startPos = realPositions[i];
+                const endPos = realPositions[i + 1];
+                
+                if (!startPos || !endPos) {
+                    continue;
+                }
+                
+                const interpolated = VehiclePositionInterpolator.generateInterpolatedPositions(startPos, endPos);
+                
+                // Add to our simulation queue
+                interpolated.forEach(pos => {
+                    allSimulatedPositions.push({
+                        position: {
+                            latitude: pos.latitude,
+                            longitude: pos.longitude
+                        },
+                        timestamp: pos.timestamp,
+                        isEstimated: pos.isEstimated,
+                        vehicleId: `vehicle_${i}`,
+                        lineId: `line_${i}`
+                    });
                 });
-            });
+            }
         }
         
         // Sort by timestamp
@@ -183,6 +198,89 @@ function startRealTimeSimulation(cachedData: CachedVehicleMonitoringData): void 
     } catch (error) {
         logger.error('❌ Failed to start real-time simulation', error as Error);
     }
+}
+
+/**
+ * Generate continuous movement when real data doesn't change
+ * Uses last known positions to create smooth movement
+ */
+function generateContinuousMovement(positions: Array<{latitude: number, longitude: number, timestamp: number}>): 
+Array<{position: {latitude: number, longitude: number}, timestamp: string, isEstimated: boolean, vehicleId: string, lineId: string}> {
+    const result: Array<{position: {latitude: number, longitude: number}, timestamp: string, isEstimated: boolean, vehicleId: string, lineId: string}> = [];
+    
+    const now = Date.now();
+    const endTime = now + 3000; // Generate 3 seconds of movement
+    
+    // For each vehicle, generate smooth movement
+    positions.forEach((pos, index) => {
+        // Create movement pattern: small back-and-forth
+        const step = 0.0001; // ~11 meters per step
+        const steps = 30; // 30 steps over 3 seconds
+        
+        for (let i = 0; i < steps; i++) {
+            const ratio = i / steps;
+            const direction = i % 2 === 0 ? 1 : -1;
+            
+            const newLat = pos.latitude + (step * direction * ratio);
+            const newLng = pos.longitude + (step * direction * ratio * 0.5);
+            
+            const timestamp = new Date(now + (i * 100)).toISOString();
+            
+            result.push({
+                position: { latitude: newLat, longitude: newLng },
+                timestamp: timestamp,
+                isEstimated: true,
+                vehicleId: `vehicle_${index}`,
+                lineId: `line_${index}`
+            });
+        }
+    });
+    
+    return result;
+}
+
+/**
+ * Generate default movement pattern when no real data is available
+ */
+function generateDefaultMovementPattern(): 
+Array<{position: {latitude: number, longitude: number}, timestamp: string, isEstimated: boolean, vehicleId: string, lineId: string}> {
+    const result: Array<{position: {latitude: number, longitude: number}, timestamp: string, isEstimated: boolean, vehicleId: string, lineId: string}> = [];
+    
+    const now = Date.now();
+    
+    // Create 2 test vehicles in Lyon area
+    const vehicles = [
+        { id: 'vehicle_1', lineId: 'line_C1', lat: 45.764043, lng: 4.835659, direction: 1 },
+        { id: 'vehicle_2', lineId: 'line_C3', lat: 45.768657, lng: 4.841867, direction: -1 }
+    ];
+    
+    // Generate movement for next 3 seconds
+    const steps = 30; // 30 steps over 3 seconds
+    
+    vehicles.forEach(vehicle => {
+        for (let i = 0; i < steps; i++) {
+            // Move vehicle in its direction
+            vehicle.lat += 0.0001 * vehicle.direction;
+            vehicle.lng += 0.00005 * vehicle.direction;
+            
+            // Reverse direction at bounds
+            if (vehicle.lat > 45.770 || vehicle.lat < 45.760) {
+                vehicle.direction *= -1;
+            }
+            
+            const timestamp = new Date(now + (i * 100)).toISOString();
+            
+            result.push({
+                position: { latitude: vehicle.lat, longitude: vehicle.lng },
+                timestamp: timestamp,
+                isEstimated: true,
+                vehicleId: vehicle.id,
+                lineId: vehicle.lineId
+            });
+        }
+    });
+    
+    return result;
 }
 
 /**
