@@ -143,10 +143,11 @@ export const updateCachedVehicleMonitoringData = async (): Promise<CachedVehicle
         );
         
         // Generate interpolated positions for the next 21 seconds
+        // This will handle sending the previous positions and starting the interpolation
         generateAndCacheInterpolatedPositions(payload);
         
-        // Send initial full data update
-        sendVehicleMonitoringUpdate(cachedData);
+        // Don't send full data update here since generateAndCacheInterpolatedPositions
+        // already handles sending the appropriate positions
         return cachedData;
     } catch (error) {
         logger.error('❌ Failed to update vehicle monitoring cached data', error as Error);
