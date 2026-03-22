@@ -132,48 +132,160 @@ export class VehiclePositionInterpolator {
     public static extractVehiclePositions(
         apiResponse: VehicleMonitoringApiResponse
     ): PositionWithTime[] {
-        // Implementation depends on actual API response structure
-        // This is a placeholder - needs to be adapted to real data structure
         const positions: PositionWithTime[] = [];
         
         try {
-            // Example structure - adjust based on actual API response
-            const vehicleActivities = apiResponse.Siri?.ServiceDelivery?.VehicleMonitoringDelivery?.[0]?.VehicleActivity;
+            // Debug: log the actual API response structure
+            console.log('🔍 Debugging API response structure:');
+            console.log('- Has Siri:', !!apiResponse.Siri);
+            console.log('- Has ServiceDelivery:', !!apiResponse.Siri?.ServiceDelivery);
+            console.log('- Has VehicleMonitoringDelivery:', !!apiResponse.Siri?.ServiceDelivery?.VehicleMonitoringDelivery);
+            console.log('- VehicleMonitoringDelivery length:', apiResponse.Siri?.ServiceDelivery?.VehicleMonitoringDelivery?.length);
             
-            if (Array.isArray(vehicleActivities)) {
-                for (const activity of vehicleActivities) {
-                    // Extract position and timestamp from each vehicle activity
-                    // This is a placeholder - adjust based on actual structure
-                    if (typeof activity === 'object' && activity !== null) {
-                        const vehicleActivity = activity as any;
-                        const latitude = vehicleActivity.VehicleLocation?.Latitude;
-                        const longitude = vehicleActivity.VehicleLocation?.Longitude;
-                        const timestamp = vehicleActivity.RecordedAtTime;
-                        
-                        if (latitude !== undefined && longitude !== undefined && timestamp) {
-                            try {
-                                const timestampDate = new Date(timestamp).getTime();
-                                if (!isNaN(timestampDate)) {
-                                    positions.push({
-                                        latitude: parseFloat(latitude),
-                                        longitude: parseFloat(longitude),
-                                        timestamp: timestampDate
-                                    });
-                                }
-                            } catch (e) {
-                                // Skip invalid timestamps
-                                continue;
-                            }
-                        }
+            if (apiResponse.Siri?.ServiceDelivery?.VehicleMonitoringDelivery?.[0]) {
+                console.log('- Has VehicleActivity:', !!apiResponse.Siri.ServiceDelivery.VehicleMonitoringDelivery[0].VehicleActivity);
+                const vehicleActivity = apiResponse.Siri.ServiceDelivery.VehicleMonitoringDelivery[0].VehicleActivity;
+                console.log('- VehicleActivity type:', Array.isArray(vehicleActivity) ? 'Array' : typeof vehicleActivity);
+                console.log('- VehicleActivity length:', Array.isArray(vehicleActivity) ? vehicleActivity.length : 'N/A');
+                
+                if (vehicleActivity && !Array.isArray(vehicleActivity)) {
+                    // If it's an object instead of array, convert to array
+                    console.log('- Converting single object to array');
+                    const activitiesArray = [vehicleActivity];
+                    
+                    for (const activity of activitiesArray) {
+                        this.extractPositionFromActivity(activity, positions);
+                    }
+                } else if (Array.isArray(vehicleActivity)) {
+                    console.log(`- Processing ${vehicleActivity.length} vehicle activities`);
+                    
+                    // Only process first 5 for debugging to avoid spam
+                    const activitiesToProcess = vehicleActivity.slice(0, 5);
+                    for (const activity of activitiesToProcess) {
+                        this.extractPositionFromActivity(activity, positions);
+                    }
+                    
+                    if (vehicleActivity.length > 5) {
+                        console.log(`- Skipped ${vehicleActivity.length - 5} activities for debugging`);
                     }
                 }
             }
         } catch (error) {
-            // Return empty array if extraction fails
+            console.error('❌ Error extracting vehicle positions:', error);
             return [];
         }
         
+        console.log(`✅ Extracted ${positions.length} vehicle positions`);
         return positions;
+    }
+    
+    /**
+     * Helper method to extract position from a single vehicle activity
+     */
+    private static extractPositionFromActivity(activity: any, positions: PositionWithTime[]): void {
+        try {
+            if (typeof activity === 'object' && activity !== null) {
+                // Deep debugging: explore the entire activity structure
+                console.log('🔍 Full activity keys:', Object.keys(activity));
+                
+                // Look for common GPS field names in the activity
+                const possibleGpsFields = ['VehicleLocation', 'Location', 'Position', 'GPS', 'Coordinates'];
+                let foundLocation = false;
+                
+                for (const field of possibleGpsFields) {
+                    if (activity[field]) {
+                        console.log(`📍 Found potential location field: ${field}:`, activity[field]);
+                        foundLocation = true;
+                        
+                        // Try to extract coordinates from this field
+                        const coordField = activity[field];
+                        if (coordField && typeof coordField === 'object') {
+                            console.log(`📋 ${field} keys:`, Object.keys(coordField));
+                            
+                            // Look for coordinate subfields
+                            const coordSubFields = ['Latitude', 'Longitude', 'Lat', 'Lng', 'X', 'Y', 'Coordinates'];
+                            let latitude: number | undefined;
+                            let longitude: number | undefined;
+                            
+                            for (const subField of coordSubFields) {
+                                if (coordField[subField] !== undefined) {
+                                    console.log(`🎯 Found coordinate subfield: ${subField} =`, coordField[subField]);
+                                    
+                                    if (subField === 'Latitude' || subField === 'Lat' || subField === 'Y') {
+                                        latitude = parseFloat(coordField[subField]);
+                                    } else if (subField === 'Longitude' || subField === 'Lng' || subField === 'X') {
+                                        longitude = parseFloat(coordField[subField]);
+                                    } else if (subField === 'Coordinates' && Array.isArray(coordField[subField]) && coordField[subField].length >= 2) {
+                                        // Handle [lng, lat] or [lat, lng] format
+                                        latitude = parseFloat(coordField[subField][1]);
+                                        longitude = parseFloat(coordField[subField][0]);
+                                    }
+                                }
+                            }
+                            
+                            const timestamp = activity.RecordedAtTime;
+                            if (latitude !== undefined && longitude !== undefined && timestamp) {
+                                try {
+                                    const timestampDate = new Date(timestamp).getTime();
+                                    if (!isNaN(timestampDate)) {
+                                        const position = {
+                                            latitude: latitude,
+                                            longitude: longitude,
+                                            timestamp: timestampDate
+                                        };
+                                        positions.push(position);
+                                        console.log(`✅ Added valid position: lat=${position.latitude.toFixed(6)}, lng=${position.longitude.toFixed(6)}`);
+                                        return; // Success, exit the function
+                                    } else {
+                                        console.log('⚠️  Invalid timestamp:', timestamp);
+                                    }
+                                } catch (e) {
+                                    console.log('⚠️  Error parsing timestamp:', timestamp, e);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if (!foundLocation) {
+                    console.log('❌ No location field found in activity. Full activity:', activity);
+                    
+                    // Try alternative approaches - look for nested structures
+                    if (activity.MonitoredVehicleJourney) {
+                        console.log('🔍 Checking MonitoredVehicleJourney:', Object.keys(activity.MonitoredVehicleJourney));
+                        const journey = activity.MonitoredVehicleJourney;
+                        
+                        // Check for VehicleLocation in journey
+                        if (journey.VehicleLocation) {
+                            console.log('📍 Found VehicleLocation in journey:', journey.VehicleLocation);
+                            const loc = journey.VehicleLocation;
+                            if (loc.Latitude !== undefined && loc.Longitude !== undefined) {
+                                const timestamp = activity.RecordedAtTime;
+                                try {
+                                    const timestampDate = new Date(timestamp).getTime();
+                                    if (!isNaN(timestampDate)) {
+                                        const position = {
+                                            latitude: parseFloat(loc.Latitude),
+                                            longitude: parseFloat(loc.Longitude),
+                                            timestamp: timestampDate
+                                        };
+                                        positions.push(position);
+                                        console.log(`✅ Added valid position from journey: lat=${position.latitude.toFixed(6)}, lng=${position.longitude.toFixed(6)}`);
+                                        return;
+                                    }
+                                } catch (e) {
+                                    console.log('⚠️  Error parsing timestamp from journey:', timestamp, e);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                console.log('⚠️  Missing required fields - no valid location found');
+            }
+        } catch (error) {
+            console.error('❌ Error processing vehicle activity:', error);
+        }
     }
     
     /**

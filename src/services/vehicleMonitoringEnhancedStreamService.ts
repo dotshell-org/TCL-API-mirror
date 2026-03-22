@@ -127,7 +127,7 @@ export const sendEnhancedVehicleMonitoringUpdate = (
  */
 function startRealTimeSimulation(cachedData: CachedVehicleMonitoringData): void {
     try {
-        if (!cachedData.payload || enhancedClients.size === 0) {
+        if (!cachedData.payload) {
             return;
         }
         
@@ -137,49 +137,24 @@ function startRealTimeSimulation(cachedData: CachedVehicleMonitoringData): void 
         // Extract real positions and generate all interpolated positions
         const realPositions = VehiclePositionInterpolator.extractVehiclePositions(cachedData.payload);
         
-        // NEW: If we don't have enough real positions, use last known positions
-        // This ensures continuous movement even when real data doesn't change
-        if (realPositions.length < 2) {
-            logger.warn('⚠️  Not enough real positions, using continuous simulation with last known data');
-            
-            // Create continuous movement pattern if no real data changes
-            if (lastKnownPositions && lastKnownPositions.length >= 2) {
-                allSimulatedPositions = generateContinuousMovement(lastKnownPositions);
-            } else {
-                // Fallback: create default movement pattern in Lyon area
-                allSimulatedPositions = generateDefaultMovementPattern();
-            }
+        // Debug: log what we received from the API
+        logger.debug(`🔍 API returned ${realPositions.length} vehicle positions`);
+        if (realPositions.length > 0 && realPositions[0]) {
+            logger.debug(`📍 Sample position: lat=${realPositions[0].latitude.toFixed(6)}, lng=${realPositions[0].longitude.toFixed(6)}, time=${new Date(realPositions[0].timestamp).toISOString()}`);
+        }
+        
+        // Only generate positions if we have at least one real position to reference
+        if (realPositions.length >= 1) {
+            logger.debug(`🔄 Using batch interpolation with ${realPositions.length} real vehicle positions`);
+            allSimulatedPositions = generateBatchInterpolatedPositions(realPositions);
+            lastKnownPositions = realPositions; // Store for future use
+        } else if (lastKnownPositions && lastKnownPositions.length >= 1) {
+            logger.debug('🔄 Using batch interpolation with last known positions');
+            allSimulatedPositions = generateBatchInterpolatedPositions(lastKnownPositions);
         } else {
-            // Store these as last known positions for future use
-            lastKnownPositions = realPositions;
-            
-            // Generate all interpolated positions from real data
-            allSimulatedPositions = [];
-            
-            for (let i = 0; i < realPositions.length - 1; i++) {
-                const startPos = realPositions[i];
-                const endPos = realPositions[i + 1];
-                
-                if (!startPos || !endPos) {
-                    continue;
-                }
-                
-                const interpolated = VehiclePositionInterpolator.generateInterpolatedPositions(startPos, endPos);
-                
-                // Add to our simulation queue
-                interpolated.forEach(pos => {
-                    allSimulatedPositions.push({
-                        position: {
-                            latitude: pos.latitude,
-                            longitude: pos.longitude
-                        },
-                        timestamp: pos.timestamp,
-                        isEstimated: pos.isEstimated,
-                        vehicleId: `vehicle_${i}`,
-                        lineId: `line_${i}`
-                    });
-                });
-            }
+            // Fallback: create default movement pattern in Lyon area
+            logger.debug('🚗 Using default movement pattern');
+            allSimulatedPositions = generateDefaultMovementPattern();
         }
         
         // Sort by timestamp
@@ -188,12 +163,12 @@ function startRealTimeSimulation(cachedData: CachedVehicleMonitoringData): void 
         // Reset index
         currentSimulationIndex = 0;
         
-        // Start sending positions at their correct time
+        // Start sending positions at 3-second intervals
         simulationInterval = setInterval(() => {
             sendDuePositions();
-        }, 100); // Check every 100ms
+        }, 3000); // Send every 3 seconds
         
-        logger.info(`🚀 Started real-time simulation with ${allSimulatedPositions.length} positions`);
+        logger.info(`🚀 Started real-time simulation with ${allSimulatedPositions.length} positions (sending every 3 seconds)`);
         
     } catch (error) {
         logger.error('❌ Failed to start real-time simulation', error as Error);
@@ -201,46 +176,56 @@ function startRealTimeSimulation(cachedData: CachedVehicleMonitoringData): void 
 }
 
 /**
- * Generate continuous movement when real data doesn't change
- * Uses last known positions to create smooth movement
+ * Generate batch interpolated positions - 6 positions per 3-second interval
+ * Only calculates positions when we have real data to reference
  */
-function generateContinuousMovement(positions: Array<{latitude: number, longitude: number, timestamp: number}>): 
+function generateBatchInterpolatedPositions(positions: Array<{latitude: number, longitude: number, timestamp: number}>): 
 Array<{position: {latitude: number, longitude: number}, timestamp: string, isEstimated: boolean, vehicleId: string, lineId: string}> {
     const result: Array<{position: {latitude: number, longitude: number}, timestamp: string, isEstimated: boolean, vehicleId: string, lineId: string}> = [];
     
     const now = Date.now();
-    const endTime = now + 3000; // Generate 3 seconds of movement
+    const intervals = 7; // 7 intervals of 3 seconds = 21 seconds total
+    const stepsPerInterval = 6; // 6 positions per 3-second interval
     
-    // For each vehicle, generate smooth movement
-    positions.forEach((pos, index) => {
-        // Create movement pattern: small back-and-forth
-        const step = 0.0001; // ~11 meters per step
-        const steps = 30; // 30 steps over 3 seconds
+    logger.debug(`🔄 Generating batch interpolated positions for ${positions.length} vehicles (${stepsPerInterval} positions per 3s interval, ${intervals} intervals total)`);
+    
+    // Generate positions for each 3-second interval
+    for (let interval = 0; interval < intervals; interval++) {
+        const intervalStartTime = now + (interval * 3000); // 3000ms = 3s
         
-        for (let i = 0; i < steps; i++) {
-            const ratio = i / steps;
-            const direction = i % 2 === 0 ? 1 : -1;
+        // Generate 6 positions for this 3-second interval
+        for (let step = 0; step < stepsPerInterval; step++) {
+            const timestamp = new Date(intervalStartTime + (step * 500)).toISOString(); // 500ms between positions
             
-            const newLat = pos.latitude + (step * direction * ratio);
-            const newLng = pos.longitude + (step * direction * ratio * 0.5);
-            
-            const timestamp = new Date(now + (i * 100)).toISOString();
-            
-            result.push({
-                position: { latitude: newLat, longitude: newLng },
-                timestamp: timestamp,
-                isEstimated: true,
-                vehicleId: `vehicle_${index}`,
-                lineId: `line_${index}`
+            // Generate positions for all vehicles at this timestamp
+            positions.forEach((pos, index) => {
+                const ratio = step / stepsPerInterval;
+                const direction = interval % 2 === 0 ? 1 : -1;
+                const stepSize = 0.0001; // ~11 meters per step
+                
+                const newLat = pos.latitude + (stepSize * direction * ratio);
+                const newLng = pos.longitude + (stepSize * direction * ratio * 0.5);
+                
+                result.push({
+                    position: { latitude: newLat, longitude: newLng },
+                    timestamp: timestamp,
+                    isEstimated: true,
+                    vehicleId: `vehicle_${index}`,
+                    lineId: `line_${index}`
+                });
             });
         }
-    });
+        
+        logger.debug(`✅ Completed interval ${interval + 1}/${intervals} with ${stepsPerInterval * positions.length} positions`);
+    }
     
+    logger.debug(`✅ Generated ${result.length} batch interpolated positions (${positions.length} vehicles × ${stepsPerInterval} positions × ${intervals} intervals)`);
     return result;
 }
 
 /**
  * Generate default movement pattern when no real data is available
+ * Generates 6 positions per 3-second interval for 21 seconds total
  */
 function generateDefaultMovementPattern(): 
 Array<{position: {latitude: number, longitude: number}, timestamp: string, isEstimated: boolean, vehicleId: string, lineId: string}> {
@@ -248,80 +233,85 @@ Array<{position: {latitude: number, longitude: number}, timestamp: string, isEst
     
     const now = Date.now();
     
+    logger.debug('🚗 Generating default movement pattern for test vehicles');
+    
     // Create 2 test vehicles in Lyon area
     const vehicles = [
         { id: 'vehicle_1', lineId: 'line_C1', lat: 45.764043, lng: 4.835659, direction: 1 },
         { id: 'vehicle_2', lineId: 'line_C3', lat: 45.768657, lng: 4.841867, direction: -1 }
     ];
     
-    // Generate movement for next 3 seconds
-    const steps = 30; // 30 steps over 3 seconds
+    const intervals = 7; // 7 intervals of 3 seconds = 21 seconds total
+    const stepsPerInterval = 6; // 6 positions per 3-second interval
+    
+    logger.debug(`📈 Generating ${intervals} intervals × ${stepsPerInterval} steps for ${vehicles.length} vehicles`);
     
     vehicles.forEach(vehicle => {
-        for (let i = 0; i < steps; i++) {
-            // Move vehicle in its direction
-            vehicle.lat += 0.0001 * vehicle.direction;
-            vehicle.lng += 0.00005 * vehicle.direction;
+        logger.debug(`🚗 ${vehicle.id} starting at lat=${vehicle.lat.toFixed(6)}, lng=${vehicle.lng.toFixed(6)}, direction=${vehicle.direction}`);
+        
+        for (let interval = 0; interval < intervals; interval++) {
+            const intervalStartTime = now + (interval * 3000); // 3000ms = 3s
             
-            // Reverse direction at bounds
-            if (vehicle.lat > 45.770 || vehicle.lat < 45.760) {
-                vehicle.direction *= -1;
+            for (let step = 0; step < stepsPerInterval; step++) {
+                // Move vehicle in its direction
+                vehicle.lat += 0.0001 * vehicle.direction;
+                vehicle.lng += 0.00005 * vehicle.direction;
+                
+                // Reverse direction at bounds
+                if (vehicle.lat > 45.770 || vehicle.lat < 45.760) {
+                    vehicle.direction *= -1;
+                    logger.debug(`🔄 ${vehicle.id} changed direction at lat=${vehicle.lat.toFixed(6)}`);
+                }
+                
+                const timestamp = new Date(intervalStartTime + (step * 500)).toISOString(); // 500ms between positions
+                
+                result.push({
+                    position: { latitude: vehicle.lat, longitude: vehicle.lng },
+                    timestamp: timestamp,
+                    isEstimated: true,
+                    vehicleId: vehicle.id,
+                    lineId: vehicle.lineId
+                });
+                
+                if (step === 0) { // Log first step of each interval to avoid spam
+                    logger.debug(`📍 ${vehicle.id} interval ${interval + 1}/${intervals} step ${step + 1}/${stepsPerInterval}: lat=${vehicle.lat.toFixed(6)}, lng=${vehicle.lng.toFixed(6)}`);
+                }
             }
-            
-            const timestamp = new Date(now + (i * 100)).toISOString();
-            
-            result.push({
-                position: { latitude: vehicle.lat, longitude: vehicle.lng },
-                timestamp: timestamp,
-                isEstimated: true,
-                vehicleId: vehicle.id,
-                lineId: vehicle.lineId
-            });
         }
     });
     
+    logger.debug(`✅ Generated ${result.length} default movement positions (${intervals} intervals × ${stepsPerInterval} steps × ${vehicles.length} vehicles)`);
     return result;
 }
 
 /**
- * Send positions that should have been sent by now
+ * Send all positions for the current 3-second interval
+ * Called every 3 seconds to send a batch of positions
  */
 function sendDuePositions(): void {
-    if (allSimulatedPositions.length === 0 || enhancedClients.size === 0) {
+    if (allSimulatedPositions.length === 0) {
         return;
     }
     
-    const now = Date.now();
-    let positionsSent = 0;
+    const positionsToSend: any[] = [];
+    const positionsPerInterval = 6; // 6 positions per 3-second interval
     
-    while (currentSimulationIndex < allSimulatedPositions.length) {
+    // Send exactly 6 positions per vehicle for this interval
+    for (let i = 0; i < positionsPerInterval && currentSimulationIndex < allSimulatedPositions.length; i++) {
         const nextPos = allSimulatedPositions[currentSimulationIndex];
-        
-        if (!nextPos) {
-            break;
-        }
-        
-        const posTime = new Date(nextPos.timestamp).getTime();
-        
-        // If this position should have been sent by now, send it
-        if (posTime <= now) {
-            sendRealTimePositionUpdate(nextPos);
+        if (nextPos) {
+            positionsToSend.push(nextPos);
             currentSimulationIndex++;
-            positionsSent++;
-        } else {
-            // This position is for the future, wait for it
-            break;
         }
     }
     
-    if (positionsSent > 0) {
-        logger.debug(`📡 Sent ${positionsSent} real-time simulated positions`);
+    // Send all positions in batch if there are clients
+    if (enhancedClients.size > 0 && positionsToSend.length > 0) {
+        positionsToSend.forEach(pos => sendRealTimePositionUpdate(pos));
+        logger.debug(`📡 Sent ${positionsToSend.length} positions for ${positionsToSend.length} vehicles (${enhancedClients.size} clients connected)`);
     }
 }
 
-/**
- * Send a single real-time position update
- */
 function sendRealTimePositionUpdate(position: any): void {
     const payload = {
         position: position.position,
