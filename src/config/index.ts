@@ -54,7 +54,7 @@ export const config = {
         baseUrl: 'https://data.grandlyon.com/siri-lite/2.0/vehicle-monitoring.json',
         email: process.env.EMAIL || '',
         password: process.env.PASSWORD || '',
-        refreshInterval: 10 * 1000, // 10 seconds in milliseconds
+        refreshInterval: 3 * 1000, // 3 seconds in milliseconds
     } as ApiConfig,
     server: {
         port: parseInt(process.env.PORT || '3000', 10),
