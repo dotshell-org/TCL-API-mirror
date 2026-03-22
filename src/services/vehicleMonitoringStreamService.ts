@@ -126,21 +126,38 @@ export const sendVehicleMonitoringUpdate = (
         lineId: string;
     }>
 ): void => {
-    // Always use the same structure with payload, count, and lastUpdated
-    const payload = {
-        count: interpolatedPositions ? interpolatedPositions.length : cachedData.count,
-        lastUpdated: cachedData.lastUpdated?.toISOString() || null,
-        payload: interpolatedPositions 
-            ? convertToSiriFormat(interpolatedPositions) 
-            : cachedData.payload
-    };
+    // If we have interpolated positions, send only those with current timestamp
+    if (interpolatedPositions && interpolatedPositions.length > 0) {
+        const payload = {
+            count: interpolatedPositions.length,
+            lastUpdated: new Date().toISOString(),
+            payload: convertToSiriFormat(interpolatedPositions)
+        };
 
-    const message = `event: positions\ndata: ${JSON.stringify(payload)}\n\n`;
-    for (const res of targets) {
-        try {
-            res.write(message);
-        } catch {
-            // Ignore write failures; cleanup happens on close.
+        const message = `event: positions\ndata: ${JSON.stringify(payload)}\n\n`;
+        for (const res of targets) {
+            try {
+                res.write(message);
+            } catch {
+                // Ignore write failures; cleanup happens on close.
+            }
+        }
+    }
+    // Otherwise send full cached data
+    else if (cachedData.payload) {
+        const payload = {
+            count: cachedData.count,
+            lastUpdated: cachedData.lastUpdated?.toISOString() || null,
+            payload: cachedData.payload
+        };
+
+        const message = `event: positions\ndata: ${JSON.stringify(payload)}\n\n`;
+        for (const res of targets) {
+            try {
+                res.write(message);
+            } catch {
+                // Ignore write failures; cleanup happens on close.
+            }
         }
     }
 };

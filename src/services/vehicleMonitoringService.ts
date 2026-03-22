@@ -139,6 +139,7 @@ export const updateCachedVehicleMonitoringData = async (): Promise<CachedVehicle
         // Generate interpolated positions for the next 21 seconds
         generateAndCacheInterpolatedPositions(payload);
         
+        // Send initial full data update
         sendVehicleMonitoringUpdate(cachedData);
         return cachedData;
     } catch (error) {
