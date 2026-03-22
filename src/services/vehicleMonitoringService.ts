@@ -214,44 +214,38 @@ function extractVehicleInfo(payload: VehicleMonitoringApiResponse): Array<{
 
 /**
  * Generates interpolated positions for the next 21 seconds (7 intervals of 3 seconds)
- * and starts sending them progressively
+ * and starts/resumes sending them progressively every 3 seconds
  */
 function generateAndCacheInterpolatedPositions(payload: VehicleMonitoringApiResponse): void {
     try {
-        // Stop any existing send interval
-        if (positionSendInterval) {
-            clearInterval(positionSendInterval);
-            positionSendInterval = null;
-        }
-        
         // Extract real vehicle information (with actual vehicle and line IDs)
         const realVehicles = extractVehicleInfo(payload);
-        
+
         if (realVehicles.length === 0) {
             logger.warn('⚠️  No real vehicle information available for interpolation');
             return;
         }
-        
+
         logger.debug(`🔍 Found ${realVehicles.length} real vehicles for interpolation`);
-        
+
         // Generate 6 positions per 3-second interval for 21 seconds (7 intervals)
         cachedInterpolatedPositions = [];
         const now = Date.now();
-        
+
         for (let interval = 0; interval < 7; interval++) {
             const intervalStartTime = now + (interval * 3000); // 3000ms = 3s
             const timestamp = new Date(intervalStartTime).toISOString();
-            
+
             // Generate 6 positions for each vehicle at this 3-second interval
             realVehicles.forEach((vehicle) => {
                 for (let step = 0; step < 6; step++) {
                     const ratio = step / 6;
                     const direction = interval % 2 === 0 ? 1 : -1;
                     const stepSize = 0.0001;
-                    
+
                     const newLat = vehicle.latitude + (stepSize * direction * ratio);
                     const newLng = vehicle.longitude + (stepSize * direction * ratio * 0.5);
-                    
+
                     cachedInterpolatedPositions.push({
                         position: { latitude: newLat, longitude: newLng },
                         timestamp: timestamp,
@@ -262,17 +256,19 @@ function generateAndCacheInterpolatedPositions(payload: VehicleMonitoringApiResp
                 }
             });
         }
-        
+
         logger.info(`✅ Generated ${cachedInterpolatedPositions.length} interpolated positions (${realVehicles.length} vehicles × 6 positions × 7 intervals)`);
-        
-        // Reset index and start sending positions every 3 seconds
+
+        // Reset index to start from beginning of new interpolated positions
         currentPositionIndex = 0;
-        
-        // Start sending positions every 3 seconds
-        positionSendInterval = setInterval(() => {
-            sendNextPositionBatch();
-        }, 3000); // Send every 3 seconds
-        
+
+        // Start sending positions every 3 seconds only if not already running
+        if (!positionSendInterval) {
+            positionSendInterval = setInterval(() => {
+                sendNextPositionBatch();
+            }, 3000); // Send every 3 seconds
+        }
+
     } catch (error) {
         logger.error('❌ Failed to generate interpolated positions', error as Error);
     }
