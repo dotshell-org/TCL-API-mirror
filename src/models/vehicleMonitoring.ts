@@ -5,11 +5,64 @@
  */
 
 /**
+ * Vehicle location information
+ */
+export interface VehicleLocation {
+    Latitude: number;
+    Longitude: number;
+    [key: string]: unknown;
+}
+
+/**
+ * Line reference
+ */
+export interface LineRef {
+    value: string;
+    [key: string]: unknown;
+}
+
+/**
+ * Vehicle reference
+ */
+export interface VehicleRef {
+    value: string;
+    [key: string]: unknown;
+}
+
+/**
+ * Vehicle monitoring reference
+ */
+export interface VehicleMonitoringRef {
+    value: string;
+    [key: string]: unknown;
+}
+
+/**
+ * Monitored vehicle journey information
+ */
+export interface MonitoredVehicleJourney {
+    LineRef: LineRef;
+    VehicleLocation: VehicleLocation;
+    VehicleRef?: VehicleRef;
+    [key: string]: unknown;
+}
+
+/**
+ * Vehicle activity information
+ */
+export interface VehicleActivity {
+    MonitoredVehicleJourney: MonitoredVehicleJourney;
+    VehicleMonitoringRef: VehicleMonitoringRef;
+    RecordedAtTime?: string;
+    [key: string]: unknown;
+}
+
+/**
  * Vehicle monitoring delivery payload
  */
 export interface VehicleMonitoringDelivery {
     /** Array of vehicle activities */
-    VehicleActivity?: unknown[];
+    VehicleActivity?: VehicleActivity[];
     /** Additional fields */
     [key: string]: unknown;
 }

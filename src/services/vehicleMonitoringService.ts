@@ -148,6 +148,70 @@ export const updateCachedVehicleMonitoringData = async (): Promise<CachedVehicle
 };
 
 /**
+ * Extracts vehicle information from SIRI payload
+ */
+function extractVehicleInfo(payload: VehicleMonitoringApiResponse): Array<{
+    vehicleId: string;
+    lineId: string;
+    latitude: number;
+    longitude: number;
+}> {
+    const vehicles: Array<{
+        vehicleId: string;
+        lineId: string;
+        latitude: number;
+        longitude: number;
+    }> = [];
+    
+    try {
+        const deliveries = payload.Siri?.ServiceDelivery?.VehicleMonitoringDelivery;
+        if (!Array.isArray(deliveries)) {
+            return vehicles;
+        }
+        
+        for (const delivery of deliveries) {
+            const activities = delivery.VehicleActivity;
+            if (!Array.isArray(activities)) {
+                continue;
+            }
+            
+            for (const activity of activities) {
+                // Type assertion since we know the structure from the API
+                const vehicleActivity = activity as any;
+                
+                if (vehicleActivity?.MonitoredVehicleJourney?.VehicleLocation && 
+                    vehicleActivity?.MonitoredVehicleJourney?.LineRef?.value &&
+                    vehicleActivity?.VehicleMonitoringRef?.value) {
+                    
+                    const vehicleLocation = vehicleActivity.MonitoredVehicleJourney.VehicleLocation;
+                    const lineRef = vehicleActivity.MonitoredVehicleJourney.LineRef.value;
+                    const vehicleRef = vehicleActivity.VehicleMonitoringRef.value;
+                    
+                    // Extract vehicle ID from the ref (format: "ActIV:Vehicle:Bus:3026:LOC")
+                    const vehicleIdMatch = vehicleRef.match(/Vehicle:([^:]+):([^:]+)/);
+                    const vehicleId = vehicleIdMatch ? `${vehicleIdMatch[1]}_${vehicleIdMatch[2]}` : vehicleRef;
+                    
+                    // Extract line ID from the ref (format: "ActIV:Line::45:SYTRAL")
+                    const lineIdMatch = lineRef.match(/Line::([^:]+):/);
+                    const lineId = lineIdMatch ? lineIdMatch[1] : lineRef;
+                    
+                    vehicles.push({
+                        vehicleId: vehicleId,
+                        lineId: lineId,
+                        latitude: parseFloat(vehicleLocation.Latitude),
+                        longitude: parseFloat(vehicleLocation.Longitude)
+                    });
+                }
+            }
+        }
+    } catch (error) {
+        logger.error('❌ Failed to extract vehicle information', error as Error);
+    }
+    
+    return vehicles;
+}
+
+/**
  * Generates interpolated positions for the next 21 seconds (7 intervals of 3 seconds)
  * and starts sending them progressively
  */
@@ -159,15 +223,15 @@ function generateAndCacheInterpolatedPositions(payload: VehicleMonitoringApiResp
             positionSendInterval = null;
         }
         
-        // Extract real vehicle positions
-        const realPositions = VehiclePositionInterpolator.extractVehiclePositions(payload);
+        // Extract real vehicle information (with actual vehicle and line IDs)
+        const realVehicles = extractVehicleInfo(payload);
         
-        if (realPositions.length === 0) {
-            logger.warn('⚠️  No real vehicle positions available for interpolation');
+        if (realVehicles.length === 0) {
+            logger.warn('⚠️  No real vehicle information available for interpolation');
             return;
         }
         
-        logger.debug(`🔍 Found ${realPositions.length} real vehicle positions for interpolation`);
+        logger.debug(`🔍 Found ${realVehicles.length} real vehicles for interpolation`);
         
         // Generate 6 positions per 3-second interval for 21 seconds (7 intervals)
         cachedInterpolatedPositions = [];
@@ -178,27 +242,27 @@ function generateAndCacheInterpolatedPositions(payload: VehicleMonitoringApiResp
             const timestamp = new Date(intervalStartTime).toISOString();
             
             // Generate 6 positions for each vehicle at this 3-second interval
-            realPositions.forEach((pos, index) => {
+            realVehicles.forEach((vehicle) => {
                 for (let step = 0; step < 6; step++) {
                     const ratio = step / 6;
                     const direction = interval % 2 === 0 ? 1 : -1;
                     const stepSize = 0.0001;
                     
-                    const newLat = pos.latitude + (stepSize * direction * ratio);
-                    const newLng = pos.longitude + (stepSize * direction * ratio * 0.5);
+                    const newLat = vehicle.latitude + (stepSize * direction * ratio);
+                    const newLng = vehicle.longitude + (stepSize * direction * ratio * 0.5);
                     
                     cachedInterpolatedPositions.push({
                         position: { latitude: newLat, longitude: newLng },
                         timestamp: timestamp,
                         isEstimated: true,
-                        vehicleId: `vehicle_${index}`,
-                        lineId: `line_${index}`
+                        vehicleId: vehicle.vehicleId,
+                        lineId: vehicle.lineId
                     });
                 }
             });
         }
         
-        logger.info(`✅ Generated ${cachedInterpolatedPositions.length} interpolated positions (${realPositions.length} vehicles × 6 positions × 7 intervals)`);
+        logger.info(`✅ Generated ${cachedInterpolatedPositions.length} interpolated positions (${realVehicles.length} vehicles × 6 positions × 7 intervals)`);
         
         // Reset index and start sending positions every 3 seconds
         currentPositionIndex = 0;
