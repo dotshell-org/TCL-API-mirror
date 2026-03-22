@@ -10,6 +10,7 @@ import {
     getVehicleMonitoringDataSync,
 } from '../services/vehicleMonitoringService.js';
 import { registerVehicleMonitoringStream } from '../services/vehicleMonitoringStreamService.js';
+import { registerEnhancedVehicleMonitoringStream } from '../services/vehicleMonitoringEnhancedStreamService.js';
 import { ApiResponse } from '../models/apiResponse.js';
 import { VehicleMonitoringApiResponse } from '../models/vehicleMonitoring.js';
 import { logger } from '../utils/logger.js';
@@ -89,4 +90,15 @@ export const getVehicleMonitoringStatus = (req: Request, res: Response): void =>
 export const streamVehicleMonitoring = (req: Request, res: Response): void => {
     const cachedData = getVehicleMonitoringDataSync();
     registerVehicleMonitoringStream(res, cachedData.payload ? cachedData : null);
+};
+
+/**
+ * Handles enhanced SSE stream for vehicle monitoring with interpolated positions
+ * Generates 9 intermediate positions between real updates for smoother animation
+ * @param req - Express request object
+ * @param res - Express response object
+ */
+export const streamEnhancedVehicleMonitoring = (req: Request, res: Response): void => {
+    const cachedData = getVehicleMonitoringDataSync();
+    registerEnhancedVehicleMonitoringStream(res, cachedData.payload ? cachedData : null);
 };
