@@ -71,18 +71,12 @@ export const sendVehicleMonitoringUpdate = (
     }>
 ): void => {
     if (interpolatedPositions && interpolatedPositions.length > 0) {
-        // Send all interpolated positions in a single batch with consistent format
+        // Send all interpolated positions in a single batch
         const firstPosition = interpolatedPositions[0];
         const payload = {
             positions: interpolatedPositions,
             count: interpolatedPositions.length,
-            timestamp: firstPosition?.timestamp || new Date().toISOString(),
-            isEnhanced: true,
-            simulationInfo: {
-                method: 'batch-interpolation',
-                interval: '3-seconds',
-                vehicles: Math.round(interpolatedPositions.length / 6)
-            }
+            timestamp: firstPosition?.timestamp || new Date().toISOString()
         };
 
         const message = `event: positions\ndata: ${JSON.stringify(payload)}\n\n`;
@@ -94,37 +88,14 @@ export const sendVehicleMonitoringUpdate = (
             }
         }
     } else {
-        // Send full payload update with same format
-        const realPositions: Array<{
-            position: { latitude: number; longitude: number };
-            timestamp: string;
-            isEstimated: boolean;
-            vehicleId: string;
-            lineId: string;
-        }> = [];
-        
-        if (cachedData.payload) {
-            // For initial connection, just send the raw payload to maintain compatibility
-            const payload = {
-                count: cachedData.count,
-                lastUpdated: cachedData.lastUpdated?.toISOString() || null,
-                payload: cachedData.payload,
-                isEnhanced: false
-            };
+        // Send full payload update
+        const payload = {
+            count: cachedData.count,
+            lastUpdated: cachedData.lastUpdated?.toISOString() || null,
+            payload: cachedData.payload
+        };
 
-            const message = `event: positions\ndata: ${JSON.stringify(payload)}\n\n`;
-            for (const res of targets) {
-                try {
-                    res.write(message);
-                } catch {
-                    // Ignore write failures; cleanup happens on close.
-                }
-            }
-            return;
-        }
-        
-        // Fallback if no payload
-        const message = `event: positions\ndata: ${JSON.stringify({ count: 0, positions: [], isEnhanced: false })}\n\n`;
+        const message = `event: positions\ndata: ${JSON.stringify(payload)}\n\n`;
         for (const res of targets) {
             try {
                 res.write(message);
