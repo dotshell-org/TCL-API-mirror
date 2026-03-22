@@ -87,8 +87,8 @@ export const sendEnhancedVehicleMonitoringUpdate = (
             isEnhanced: true,
             interpolationInfo: {
                 method: 'quadratic-bezier',
-                positionsGenerated: 9,
-                totalPositions: cachedData.count * 10 // 1 real + 9 estimated per vehicle
+                positionsGenerated: 29,
+                totalPositions: cachedData.count * 30 // 1 real + 29 estimated per vehicle
             }
         };
 

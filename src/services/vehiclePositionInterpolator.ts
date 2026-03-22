@@ -42,7 +42,7 @@ export class VehiclePositionInterpolator {
         endPos: PositionWithTime
     ): InterpolatedPosition[] {
         const interpolated: InterpolatedPosition[] = [];
-        const totalSteps = 9;
+        const totalSteps = 29; // Changed from 9 to 29 for 3x more data
         const timeDiff = endPos.timestamp - startPos.timestamp;
         const stepDuration = timeDiff / (totalSteps + 1);
         
