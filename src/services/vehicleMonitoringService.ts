@@ -28,14 +28,15 @@ let cachedData: CachedVehicleMonitoringData = {
 /**
  * Cached interpolated positions for real-time updates
  * Stores positions calculated every 21 seconds for 3-second intervals
+ * Organized by interval index, then by vehicle
  */
-let cachedInterpolatedPositions: Array<{
+let cachedInterpolatedPositions: Array<Array<{
     position: { latitude: number; longitude: number };
     timestamp: string;
     isEstimated: boolean;
     vehicleId: string;
     lineId: string;
-}> = [];
+}>> = [];
 
 let positionsToSend: Array<{
     position: { latitude: number; longitude: number };
@@ -45,7 +46,7 @@ let positionsToSend: Array<{
     lineId: string;
 }> = [];
 
-let currentPositionIndex = 0;
+let currentIntervalIndex = 0;
 let positionSendInterval: NodeJS.Timeout | null = null;
 
 /**
@@ -219,7 +220,7 @@ function extractVehicleInfo(payload: VehicleMonitoringApiResponse): Array<{
 
 /**
  * Generates interpolated positions for the next 21 seconds (7 intervals of 3 seconds)
- * Interpolates between current real positions and where vehicles will be at next fetch
+ * Interpolates between previous fetch position and current fetch position for each vehicle
  * @param payload - Current API payload
  * @param sendRealPositionsFirst - Whether to send real positions before interpolated ones
  */
@@ -239,7 +240,9 @@ function generateAndCacheInterpolatedPositions(payload: VehicleMonitoringApiResp
         const currentVehiclePositions = new Map<string, { latitude: number; longitude: number; lineId: string }>();
         
         // Calculate interpolated positions for each vehicle
-        cachedInterpolatedPositions = [];
+        // Structure: array of 7 intervals, each containing all vehicles
+        // Pre-initialize all 7 intervals
+        cachedInterpolatedPositions = [[], [], [], [], [], [], []];
         const now = Date.now();
 
         realVehicles.forEach((vehicle) => {
@@ -260,7 +263,7 @@ function generateAndCacheInterpolatedPositions(payload: VehicleMonitoringApiResp
                 const lngDelta = vehicle.longitude - prevPosition.longitude;
 
                 // Generate 7 interpolated positions (one for each 3s interval over 21s)
-                // Start from previous position and move towards current position
+                // Each interval contains ALL vehicles at their interpolated position
                 for (let interval = 1; interval <= 7; interval++) {
                     const intervalStartTime = now + (interval * 3000); // 3000ms = 3s
                     const timestamp = new Date(intervalStartTime).toISOString();
@@ -271,7 +274,7 @@ function generateAndCacheInterpolatedPositions(payload: VehicleMonitoringApiResp
                     const newLat = prevPosition.latitude + (latDelta * ratio);
                     const newLng = prevPosition.longitude + (lngDelta * ratio);
 
-                    cachedInterpolatedPositions.push({
+                    cachedInterpolatedPositions[interval - 1]!.push({
                         position: { latitude: newLat, longitude: newLng },
                         timestamp: timestamp,
                         isEstimated: true,
@@ -285,7 +288,7 @@ function generateAndCacheInterpolatedPositions(payload: VehicleMonitoringApiResp
                     const intervalStartTime = now + (interval * 3000);
                     const timestamp = new Date(intervalStartTime).toISOString();
 
-                    cachedInterpolatedPositions.push({
+                    cachedInterpolatedPositions[interval - 1]!.push({
                         position: { latitude: vehicle.latitude, longitude: vehicle.longitude },
                         timestamp: timestamp,
                         isEstimated: true,
@@ -299,10 +302,11 @@ function generateAndCacheInterpolatedPositions(payload: VehicleMonitoringApiResp
         // Update previous positions for next interpolation
         previousVehiclePositions = currentVehiclePositions;
 
-        logger.info(`✅ Generated ${cachedInterpolatedPositions.length} interpolated positions (${realVehicles.length} vehicles × 7 intervals)`);
+        const totalPositions = cachedInterpolatedPositions.reduce((sum, interval) => sum + interval.length, 0);
+        logger.info(`✅ Generated ${totalPositions} interpolated positions (${realVehicles.length} vehicles × 7 intervals)`);
 
-        // Reset index to start from beginning of new interpolated positions
-        currentPositionIndex = 0;
+        // Reset interval index to start from beginning
+        currentIntervalIndex = 0;
 
         // Send real positions first before starting interpolated positions
         if (sendRealPositionsFirst) {
@@ -331,44 +335,32 @@ function generateAndCacheInterpolatedPositions(payload: VehicleMonitoringApiResp
 }
 
 /**
- * Sends all positions for the current 3-second interval
- * Each interval contains 1 position per vehicle
+ * Sends all vehicle positions for the current 3-second interval
+ * Each interval contains ALL vehicles at their interpolated position
  */
 function sendNextPositionBatch(): void {
     if (cachedInterpolatedPositions.length === 0) {
         return;
     }
 
-    // Calculate how many positions to send for this 3-second interval
-    // Each vehicle has 1 position per interval, so total per interval = vehicles count
-    const vehiclesCount = cachedInterpolatedPositions.length / 7; // 7 intervals
-    const positionsPerInterval = vehiclesCount;
+    // Get all vehicles for the current interval
+    positionsToSend = cachedInterpolatedPositions[currentIntervalIndex] || [];
 
-    // Clear previous batch
-    positionsToSend = [];
-
-    // Send all positions for this 3-second interval
-    const endIndex = Math.min(currentPositionIndex + positionsPerInterval, cachedInterpolatedPositions.length);
-    for (let i = currentPositionIndex; i < endIndex; i++) {
-        const position = cachedInterpolatedPositions[i];
-        if (position) {
-            positionsToSend.push(position);
-        }
-    }
-
-    currentPositionIndex = endIndex;
+    currentIntervalIndex++;
 
     if (positionsToSend.length > 0) {
-        logger.debug(`📡 Sending ${positionsToSend.length} interpolated positions for ${vehiclesCount} vehicles`);
+        const vehiclesCount = new Set(positionsToSend.map(p => p.vehicleId)).size;
+        logger.debug(`📡 Sending ${positionsToSend.length} interpolated positions for ${vehiclesCount} vehicles (interval ${currentIntervalIndex}/7)`);
         sendVehicleMonitoringUpdate(cachedData, undefined, positionsToSend);
     }
 
-    // Stop sending if we've sent all positions
-    if (currentPositionIndex >= cachedInterpolatedPositions.length) {
+    // Stop sending if we've sent all 7 intervals
+    if (currentIntervalIndex >= cachedInterpolatedPositions.length) {
         if (positionSendInterval) {
             clearInterval(positionSendInterval);
             positionSendInterval = null;
         }
+        logger.debug('✅ All interpolated positions sent, waiting for next fetch');
     }
 }
 
