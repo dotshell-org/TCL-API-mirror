@@ -13,7 +13,7 @@ import {
     VehicleMonitoringDelivery,
 } from '../models/vehicleMonitoring.js';
 import { sendVehicleMonitoringUpdate } from './vehicleMonitoringStreamService.js';
-import { sendEnhancedVehicleMonitoringUpdate } from './vehicleMonitoringEnhancedStreamService.js';
+import { VehiclePositionInterpolator } from './vehiclePositionInterpolator.js';
 
 /**
  * Cached vehicle monitoring data storage
@@ -24,6 +24,29 @@ let cachedData: CachedVehicleMonitoringData = {
     lastUpdated: null,
     count: 0,
 };
+
+/**
+ * Cached interpolated positions for real-time updates
+ * Stores positions calculated every 21 seconds for 3-second intervals
+ */
+let cachedInterpolatedPositions: Array<{
+    position: { latitude: number; longitude: number };
+    timestamp: string;
+    isEstimated: boolean;
+    vehicleId: string;
+    lineId: string;
+}> = [];
+
+let positionsToSend: Array<{
+    position: { latitude: number; longitude: number };
+    timestamp: string;
+    isEstimated: boolean;
+    vehicleId: string;
+    lineId: string;
+}> = [];
+
+let currentPositionIndex = 0;
+let positionSendInterval: NodeJS.Timeout | null = null;
 
 /**
  * Interval reference for the scheduled data refresh
@@ -112,14 +135,125 @@ export const updateCachedVehicleMonitoringData = async (): Promise<CachedVehicle
         logger.debug(
             `🔄 Vehicle monitoring cache updated with ${count} vehicles at ${now.toLocaleString('en-US')}`
         );
+        
+        // Generate interpolated positions for the next 21 seconds
+        generateAndCacheInterpolatedPositions(payload);
+        
         sendVehicleMonitoringUpdate(cachedData);
-        sendEnhancedVehicleMonitoringUpdate(cachedData);
         return cachedData;
     } catch (error) {
         logger.error('❌ Failed to update vehicle monitoring cached data', error as Error);
         throw error;
     }
 };
+
+/**
+ * Generates interpolated positions for the next 21 seconds (7 intervals of 3 seconds)
+ * and starts sending them progressively
+ */
+function generateAndCacheInterpolatedPositions(payload: VehicleMonitoringApiResponse): void {
+    try {
+        // Stop any existing send interval
+        if (positionSendInterval) {
+            clearInterval(positionSendInterval);
+            positionSendInterval = null;
+        }
+        
+        // Extract real vehicle positions
+        const realPositions = VehiclePositionInterpolator.extractVehiclePositions(payload);
+        
+        if (realPositions.length === 0) {
+            logger.warn('⚠️  No real vehicle positions available for interpolation');
+            return;
+        }
+        
+        logger.debug(`🔍 Found ${realPositions.length} real vehicle positions for interpolation`);
+        
+        // Generate 6 positions per 3-second interval for 21 seconds (7 intervals)
+        cachedInterpolatedPositions = [];
+        const now = Date.now();
+        
+        for (let interval = 0; interval < 7; interval++) {
+            const intervalStartTime = now + (interval * 3000); // 3000ms = 3s
+            const timestamp = new Date(intervalStartTime).toISOString();
+            
+            // Generate 6 positions for each vehicle at this 3-second interval
+            realPositions.forEach((pos, index) => {
+                for (let step = 0; step < 6; step++) {
+                    const ratio = step / 6;
+                    const direction = interval % 2 === 0 ? 1 : -1;
+                    const stepSize = 0.0001;
+                    
+                    const newLat = pos.latitude + (stepSize * direction * ratio);
+                    const newLng = pos.longitude + (stepSize * direction * ratio * 0.5);
+                    
+                    cachedInterpolatedPositions.push({
+                        position: { latitude: newLat, longitude: newLng },
+                        timestamp: timestamp,
+                        isEstimated: true,
+                        vehicleId: `vehicle_${index}`,
+                        lineId: `line_${index}`
+                    });
+                }
+            });
+        }
+        
+        logger.info(`✅ Generated ${cachedInterpolatedPositions.length} interpolated positions (${realPositions.length} vehicles × 6 positions × 7 intervals)`);
+        
+        // Reset index and start sending positions every 3 seconds
+        currentPositionIndex = 0;
+        
+        // Start sending positions every 3 seconds
+        positionSendInterval = setInterval(() => {
+            sendNextPositionBatch();
+        }, 3000); // Send every 3 seconds
+        
+    } catch (error) {
+        logger.error('❌ Failed to generate interpolated positions', error as Error);
+    }
+}
+
+/**
+ * Sends all positions for the current 3-second interval
+ * Each interval contains 6 positions per vehicle
+ */
+function sendNextPositionBatch(): void {
+    if (cachedInterpolatedPositions.length === 0) {
+        return;
+    }
+    
+    // Calculate how many positions to send for this 3-second interval
+    // Each vehicle has 6 positions, so total per interval = vehicles × 6
+    const vehiclesCount = cachedInterpolatedPositions.length / 42; // 7 intervals × 6 positions
+    const positionsPerInterval = vehiclesCount * 6;
+    
+    // Clear previous batch
+    positionsToSend = [];
+    
+    // Send all positions for this 3-second interval
+    const endIndex = Math.min(currentPositionIndex + positionsPerInterval, cachedInterpolatedPositions.length);
+    for (let i = currentPositionIndex; i < endIndex; i++) {
+        const position = cachedInterpolatedPositions[i];
+        if (position) {
+            positionsToSend.push(position);
+        }
+    }
+    
+    currentPositionIndex = endIndex;
+    
+    if (positionsToSend.length > 0) {
+        logger.debug(`📡 Sending ${positionsToSend.length} interpolated positions for ${vehiclesCount} vehicles`);
+        sendVehicleMonitoringUpdate(cachedData, undefined, positionsToSend);
+    }
+    
+    // Stop sending if we've sent all positions
+    if (currentPositionIndex >= cachedInterpolatedPositions.length) {
+        if (positionSendInterval) {
+            clearInterval(positionSendInterval);
+            positionSendInterval = null;
+        }
+    }
+}
 
 /**
  * Gets the current cached vehicle monitoring data

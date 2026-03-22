@@ -9,7 +9,6 @@ import {
     getVehicleMonitoring,
     getVehicleMonitoringStatus,
     streamVehicleMonitoring,
-    streamEnhancedVehicleMonitoring,
 } from '../controllers/vehicleMonitoringController.js';
 
 const router = Router();
@@ -27,12 +26,7 @@ router.get('/positions', getVehicleMonitoring);
  */
 router.get('/positions/stream', streamVehicleMonitoring);
 
-/**
- * @route GET /vehicle-monitoring/positions/stream/enhanced
- * @description Streams vehicle monitoring with interpolated positions (SSE)
- * Generates 9 intermediate positions between real updates for smoother animation
- */
-router.get('/positions/stream/enhanced', streamEnhancedVehicleMonitoring);
+
 
 /**
  * @route GET /vehicle-monitoring/status

@@ -61,20 +61,54 @@ export const registerVehicleMonitoringStream = (
 
 export const sendVehicleMonitoringUpdate = (
     cachedData: CachedVehicleMonitoringData,
-    targets: Set<Response> = clients
+    targets: Set<Response> = clients,
+    interpolatedPositions?: Array<{
+        position: { latitude: number; longitude: number };
+        timestamp: string;
+        isEstimated: boolean;
+        vehicleId: string;
+        lineId: string;
+    }>
 ): void => {
-    const payload = {
-        count: cachedData.count,
-        lastUpdated: cachedData.lastUpdated?.toISOString() || null,
-        payload: cachedData.payload,
-    };
+    if (interpolatedPositions && interpolatedPositions.length > 0) {
+        // Send interpolated positions as real-time updates
+        interpolatedPositions.forEach(position => {
+            const payload = {
+                position: position.position,
+                timestamp: position.timestamp,
+                isEstimated: position.isEstimated,
+                vehicleId: position.vehicleId,
+                lineId: position.lineId,
+                simulationInfo: {
+                    method: 'batch-interpolation',
+                    interval: '3-seconds'
+                }
+            };
 
-    const message = `event: positions\ndata: ${JSON.stringify(payload)}\n\n`;
-    for (const res of targets) {
-        try {
-            res.write(message);
-        } catch {
-            // Ignore write failures; cleanup happens on close.
+            const message = `event: realtime-position\ndata: ${JSON.stringify(payload)}\n\n`;
+            for (const res of targets) {
+                try {
+                    res.write(message);
+                } catch {
+                    // Ignore write failures; cleanup happens on close.
+                }
+            }
+        });
+    } else {
+        // Send full payload update
+        const payload = {
+            count: cachedData.count,
+            lastUpdated: cachedData.lastUpdated?.toISOString() || null,
+            payload: cachedData.payload,
+        };
+
+        const message = `event: positions\ndata: ${JSON.stringify(payload)}\n\n`;
+        for (const res of targets) {
+            try {
+                res.write(message);
+            } catch {
+                // Ignore write failures; cleanup happens on close.
+            }
         }
     }
 };
