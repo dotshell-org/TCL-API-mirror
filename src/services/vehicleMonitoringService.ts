@@ -52,7 +52,7 @@ let positionSendInterval: NodeJS.Timeout | null = null;
 /**
  * Stores previous vehicle positions to calculate movement direction
  */
-let previousVehiclePositions: Map<string, { latitude: number; longitude: number }> = new Map();
+let previousVehiclePositions: Map<string, { latitude: number; longitude: number; lineId: string }> = new Map();
 
 /**
  * Interval reference for the scheduled data refresh
@@ -310,16 +310,36 @@ function generateAndCacheInterpolatedPositions(payload: VehicleMonitoringApiResp
 
         // Send real positions first before starting interpolated positions
         if (sendRealPositionsFirst) {
-            const realPositions = realVehicles.map(v => ({
-                position: { latitude: v.latitude, longitude: v.longitude },
-                timestamp: new Date().toISOString(),
-                isEstimated: false,
-                vehicleId: v.vehicleId,
-                lineId: v.lineId
-            }));
+            // Send positions from previous fetch (n-1) instead of current fetch (n)
+            const previousPositions: Array<{
+                position: { latitude: number; longitude: number };
+                timestamp: string;
+                isEstimated: boolean;
+                vehicleId: string;
+                lineId: string;
+            }> = [];
             
-            logger.debug(`📡 Sending ${realPositions.length} real vehicle positions first`);
-            sendVehicleMonitoringUpdate(cachedData, undefined, realPositions);
+            // Convert previousVehiclePositions map to array format
+            // Match with current vehicles to get lineId information
+            realVehicles.forEach(vehicle => {
+                const prevPos = previousVehiclePositions.get(vehicle.vehicleId);
+                if (prevPos) {
+                    previousPositions.push({
+                        position: { latitude: prevPos.latitude, longitude: prevPos.longitude },
+                        timestamp: new Date().toISOString(),
+                        isEstimated: false,
+                        vehicleId: vehicle.vehicleId,
+                        lineId: vehicle.lineId
+                    });
+                }
+            });
+            
+            if (previousPositions.length > 0) {
+                logger.debug(`📡 Sending ${previousPositions.length} previous vehicle positions first`);
+                sendVehicleMonitoringUpdate(cachedData, undefined, previousPositions);
+            } else {
+                logger.debug('📡 No previous vehicle positions available to send');
+            }
         }
 
         // Start sending positions every 3 seconds only if not already running
