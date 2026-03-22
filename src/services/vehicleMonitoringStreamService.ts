@@ -4,7 +4,7 @@
  */
 
 import { Response } from 'express';
-import { CachedVehicleMonitoringData } from '../models/vehicleMonitoring.js';
+import {CachedVehicleMonitoringData, VehicleMonitoringApiResponse} from '../models/vehicleMonitoring.js';
 import { logger } from '../utils/logger.js';
 
 const clients = new Set<Response>();
@@ -59,6 +59,62 @@ export const registerVehicleMonitoringStream = (
     });
 };
 
+/**
+ * Converts interpolated positions to SIRI format
+ */
+const convertToSiriFormat = (
+    interpolatedPositions: Array<{
+        position: { latitude: number; longitude: number };
+        timestamp: string;
+        isEstimated: boolean;
+        vehicleId: string;
+        lineId: string;
+    }>
+): VehicleMonitoringApiResponse => {
+    // Create SIRI structure with interpolated positions as VehicleActivity
+    const vehicleActivities = interpolatedPositions.map(pos => ({
+        RecordedAtTime: pos.timestamp,
+        ValidUntilTime: new Date(Date.parse(pos.timestamp) + 60000).toISOString(),
+        VehicleMonitoringRef: {
+            value: `Interpolated:${pos.vehicleId}:${pos.lineId}`
+        },
+        MonitoredVehicleJourney: {
+            LineRef: {
+                value: `Interpolated:Line::${pos.lineId}`
+            },
+            DirectionRef: {
+                value: "unknown"
+            },
+            VehicleLocation: {
+                Latitude: pos.position.latitude,
+                Longitude: pos.position.longitude
+            },
+            VehicleRef: {
+                value: `Interpolated:Vehicle:${pos.vehicleId}`
+            },
+            VehicleStatus: pos.isEstimated ? "IN_PROGRESS" : "AT_STOP",
+            DataSource: "INTERPOLATED"
+        }
+    }));
+
+    return {
+        Siri: {
+            ServiceDelivery: {
+                ResponseTimestamp: new Date().toISOString(),
+                ProducerRef: {
+                    value: "INTERPOLATOR"
+                },
+                VehicleMonitoringDelivery: [
+                    {
+                        VehicleActivity: vehicleActivities,
+                        ResponseTimestamp: new Date().toISOString()
+                    }
+                ]
+            }
+        }
+    };
+};
+
 export const sendVehicleMonitoringUpdate = (
     cachedData: CachedVehicleMonitoringData,
     targets: Set<Response> = clients,
@@ -74,7 +130,9 @@ export const sendVehicleMonitoringUpdate = (
     const payload = {
         count: interpolatedPositions ? interpolatedPositions.length : cachedData.count,
         lastUpdated: cachedData.lastUpdated?.toISOString() || null,
-        payload: interpolatedPositions || cachedData.payload
+        payload: interpolatedPositions 
+            ? convertToSiriFormat(interpolatedPositions) 
+            : cachedData.payload
     };
 
     const message = `event: positions\ndata: ${JSON.stringify(payload)}\n\n`;
