@@ -70,38 +70,19 @@ export const sendVehicleMonitoringUpdate = (
         lineId: string;
     }>
 ): void => {
-    if (interpolatedPositions && interpolatedPositions.length > 0) {
-        // Send all interpolated positions in a single batch
-        const firstPosition = interpolatedPositions[0];
-        const payload = {
-            positions: interpolatedPositions,
-            count: interpolatedPositions.length,
-            timestamp: firstPosition?.timestamp || new Date().toISOString()
-        };
+    // Always use the same structure with payload, count, and lastUpdated
+    const payload = {
+        count: interpolatedPositions ? interpolatedPositions.length : cachedData.count,
+        lastUpdated: cachedData.lastUpdated?.toISOString() || null,
+        payload: interpolatedPositions || cachedData.payload
+    };
 
-        const message = `event: positions\ndata: ${JSON.stringify(payload)}\n\n`;
-        for (const res of targets) {
-            try {
-                res.write(message);
-            } catch {
-                // Ignore write failures; cleanup happens on close.
-            }
-        }
-    } else {
-        // Send full payload update
-        const payload = {
-            count: cachedData.count,
-            lastUpdated: cachedData.lastUpdated?.toISOString() || null,
-            payload: cachedData.payload
-        };
-
-        const message = `event: positions\ndata: ${JSON.stringify(payload)}\n\n`;
-        for (const res of targets) {
-            try {
-                res.write(message);
-            } catch {
-                // Ignore write failures; cleanup happens on close.
-            }
+    const message = `event: positions\ndata: ${JSON.stringify(payload)}\n\n`;
+    for (const res of targets) {
+        try {
+            res.write(message);
+        } catch {
+            // Ignore write failures; cleanup happens on close.
         }
     }
 };
